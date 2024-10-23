@@ -40,7 +40,11 @@ class Core:
         # 信赖域
         self._delta = np.array(
             [
+<<<<<<< HEAD
                 2000,
+=======
+                30000,
+>>>>>>> 12d81d4 (feat: 添加爬升模型及求解算法)
                 1000,
                 40 * pi / 180,
                 1000,
@@ -127,6 +131,7 @@ class Core:
         # 针对时间自由构造问题
         stateDim = self.stateDim
         I = np.eye(self.stateDim)
+<<<<<<< HEAD
         dt = dt * tf
         AK = np.zeros(((N - 1) * stateDim, N * stateDim))
         BK = dt * block_diag(*B[:-1])
@@ -135,11 +140,28 @@ class Core:
         )
         CK = dt * (C[:-1]).reshape(
             -1,
+=======
+        AK = np.zeros(((N - 1) * stateDim, N * stateDim))
+        BK = dt * tf * block_diag(*B[:-1])
+        FK = dt * (F[:-1]).reshape(
+            -1,
+        )
+        CK = (
+            dt
+            * tf
+            * (C[:-1]).reshape(
+                -1,
+            )
+>>>>>>> 12d81d4 (feat: 添加爬升模型及求解算法)
         )
         for i in range(N - 1):
             start_idx = stateDim * i
             end_idx = stateDim * (i + 1)
+<<<<<<< HEAD
             AK[start_idx:end_idx, start_idx:end_idx] = dt * A[i] + I
+=======
+            AK[start_idx:end_idx, start_idx:end_idx] = dt * tf * A[i] + I
+>>>>>>> 12d81d4 (feat: 添加爬升模型及求解算法)
             AK[
                 start_idx:end_idx,
                 end_idx : end_idx + stateDim,
