@@ -23,13 +23,6 @@ class Climb(ClimbModel):
         )
 
         F, X, U, H, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf = self.buildBaseProblem()
-<<<<<<< HEAD
-        F = F + [X[ntheta[-1]] <= 0.0 / 57.3]
-        F = F + [X[ntheta[-1]] >= 0.0 / 57.3]
-
-        F = F + [X[ny[-1]] >= self.yf]
-        obj = cp.Minimize((X[nV[-1]] - self.Vf) ** 2)
-=======
         F = F + [X[ntheta[-1]] <= 10.0 / 57.3]
         F = F + [X[ntheta[-1]] >= -20.0 / 57.3]
 
@@ -37,7 +30,6 @@ class Climb(ClimbModel):
 
         F = F + [X[ny[-1]] >= self.yf]
         obj = cp.Minimize(X[ny[-1]])
->>>>>>> 12d81d4 (feat: 添加爬升模型及求解算法)
         problem = cp.Problem(obj, F)
         return problem, X, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf
 
@@ -127,11 +119,7 @@ def main(
         P=P,
         Isp=Isp,
     )
-<<<<<<< HEAD
-    Mis.setSimuParams(N=200, iterMax=10)
-=======
     Mis.setSimuParams(N=100, iterMax=10)
->>>>>>> 12d81d4 (feat: 添加爬升模型及求解算法)
     Mis.setIniState(*X0)
     Mis.setEndState(*Xf)
     result = Mis.solve()
