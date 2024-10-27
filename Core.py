@@ -1,6 +1,8 @@
 import numpy as np
 from numpy import sin, cos, exp, zeros, linspace, sqrt, pi
 from scipy.linalg import block_diag
+from Discrete import DiscreteSystem
+from Scaling import TrajectoryScaling
 
 g0 = 9.81
 R0 = 6378137
@@ -9,52 +11,7 @@ R0 = 6378137
 # 针对时间自由的问题
 class Core:
     def __init__(self):
-        self.obstacleR = None
-        self.obstacleCenter = None
-        self.psif = None
-        self.thetaF = None
-        self.zf = None
-        self.yf = None
-        self.xf = None
-        self.P0 = None
-        self.sigma0 = None
-        self.alpha0 = 0
-        self.m0 = None
-        self.psi0 = None
-        self.theta0 = None
-        self.V0 = None
-        self.z0 = None
-        self.y0 = None
-        self.x0 = None
-        self.iterMax = None
-        self.N = None
-        self.mMin = None
-        self.Isp = None
-        self.s = None
-        self.alphaMax = None
-        self.sigmaMax = None
-        self.PMax = None
-        self.PMin = None
-        self.problem = None
-        self.CLdown = 1
-        # 信赖域
-        self._delta = np.array(
-            [
-                2000,
-                1000,
-                40 * pi / 180,
-                1000,
-            ]
-        ).reshape(-1, 1)
-        # 收敛判据
-        self._epsilon = np.array(
-            [
-                100,
-                20,
-                1 * pi / 180,
-                20,
-            ]
-        ).reshape(-1, 1)
+        pass
 
     def setDelta(self, delta):
         # 设置信赖域参数
@@ -69,21 +26,20 @@ class Core:
     def setParams(
         self,
         s=1,
-        mMin=0,
+        mDry=0,
         alphaMax=15 / 180 * pi,
-        sigmaMax=60 * pi / 180,
+        sigmaMax=60 / 180 * pi,
         PMax=60000,
         PMin=60000,
         QsMax=1e6,
         qMax=9e5,
         nMax=50,
-        P=160000,
         Isp=4000,
     ):
         # 设置飞行器基本制导参数，这里只有参考面积, 攻角限幅与倾侧角限幅
 
         self.s = s
-        self.mMin = mMin
+        self.mDry = mDry
         self.alphaMax = alphaMax
         self.sigmaMax = sigmaMax
         self.PMax = PMax
@@ -91,19 +47,19 @@ class Core:
         self.Qsmax = QsMax
         self.qMax = qMax
         self.nmax = nMax
-        self.P = P
         self.Isp = Isp
 
         return True
 
-    def setSimuParams(self, N=100, iterMax=6):
+    def setSimuParams(self, N=100, iterMax=6, mode="foh"):
         # 设置仿真基本参数 轨迹离散点数N 序列凸优化最大迭代次数iterMax
 
         self.N = N
         self.iterMax = iterMax
+        self.mode = mode
         return True
 
-    def setIniState(self, lon, y, lat, V, theta, psi, m):
+    def setIniState(self, y, lon, lat, V, theta, psi, m):
         # 设置期望初始状态
         self.lon0 = lon
         self.y0 = y
@@ -113,7 +69,7 @@ class Core:
         self.psi0 = psi / 180 * pi
         self.m0 = m
 
-    def setEndState(self, lon, y, lat, V, theta, psi, m):
+    def setEndState(self, y, lon, lat, V, theta, psi, m):
         # 设置期望终点状态
         self.lonf = lon
         self.yf = y
@@ -123,48 +79,25 @@ class Core:
         self.psif = psi / 180 * pi
         self.mf = m
 
-    def formDynamicConstraints(self, A, B, F, C, N, dt, tf):
-        # 针对时间自由构造问题
-        stateDim = self.stateDim
-        I = np.eye(self.stateDim)
-        AK = np.zeros(((N - 1) * stateDim, N * stateDim))
-        BK = dt * tf * block_diag(*B[:-1])
-        FK = dt * (F[:-1]).reshape(
-            -1,
+    def buildDiscrete(self, dt, tf, A, B, f):
+        # 线性插值的矩阵离散化方法（FOH） 矢量化
+        return DiscreteSystem(
+            self.stateDim,
+            self.controlDim,
+            dt,
+            tf,
+            A,
+            B,
+            f,
         )
-        CK = (
-            dt
-            * tf
-            * (C[:-1]).reshape(
-                -1,
-            )
-        )
-        for i in range(N - 1):
-            start_idx = stateDim * i
-            end_idx = stateDim * (i + 1)
-            AK[start_idx:end_idx, start_idx:end_idx] = dt * tf * A[i] + I
-            AK[
-                start_idx:end_idx,
-                end_idx : end_idx + stateDim,
-            ] = -I
 
-        return (AK, BK, FK, CK)
-
-    def formABCK(self, Ja, refTraj, addParameters=None):
-        num = refTraj.shape[1]
+    def formABCK(self, Ja, refTraj, dt, tf):
         self.stateDim = Ja.stateDim
         self.controlDim = Ja.controlDim
-        if addParameters is not None:
-            A = Ja.GetA(*refTraj, *addParameters).transpose(2, 0, 1)
-            F = Ja.GetF(*refTraj, *addParameters).transpose(2, 0, 1)
-            B = Ja.GetB(*refTraj, *addParameters).transpose(2, 0, 1)
-        else:
-            A = Ja.GetA(*refTraj).transpose(2, 0, 1)
-            F = Ja.GetF(*refTraj).transpose(2, 0, 1)
-            B = Ja.GetB(*refTraj).transpose(2, 0, 1)
-        X = np.array(refTraj.T).reshape(num, self.stateDim, 1)
-        U = np.array(addParameters.T).reshape(num, self.controlDim, 1)
-        return A, B, F, -np.matmul(A, X) - np.matmul(B, U)
+        self.discreteSys = self.buildDiscrete(dt, tf, Ja.GetA, Ja.GetB, Ja.GetF)
+        return self.discreteSys.diff_discrete(
+            refTraj[:, : self.stateDim], refTraj[:, self.stateDim :], mode=self.mode
+        )
 
     def solve(self):
         _delta = self._delta.copy()

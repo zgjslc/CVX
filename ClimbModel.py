@@ -3,7 +3,7 @@ from numpy import zeros, linspace
 from Core import Core
 import sympy as sy
 from sympy import cos, sin, tan, sqrt, exp
-from ConvCore import JacM
+from JacobianLinearizer import JacM
 import cvxpy as cp
 
 R0 = 6371000

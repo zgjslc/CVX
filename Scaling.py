@@ -58,18 +58,14 @@ class TrajectoryScaling:
             x_min, x_max, u_min, u_max
         )
 
-    def scale(self, x, u, N):
+    def scale(self, x, u):
         # 对状态量和控制量进行缩放
-        x = x.reshape(N, -1, 1)
-        u = u.reshape(N, -1, 1)
-        scaled_x = self.iSx.T @ (x - self.sx).T
-        scaled_u = self.iSu.T @ (u - self.su).T
+        scaled_x = self.iSx @ (x - self.sx)
+        scaled_u = self.iSu @ (u - self.su)
         return scaled_x.T, scaled_u.T
 
-    def unscale(self, scaled_x, scaled_u, N):
+    def unscale(self, scaled_x, scaled_u):
         # 对缩放后的状态量和控制量进行还原
-        scaled_x = scaled_x.reshape(N, -1, 1)
-        scaled_u = scaled_u.reshape(N, -1, 1)
         x = self.Sx @ scaled_x + self.sx
         u = self.Su @ scaled_u + self.su
         return x, u
