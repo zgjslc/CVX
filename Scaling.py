@@ -52,8 +52,8 @@ class TrajectoryScaling:
         if x.shape[1] != u.shape[1]:
             raise ValueError("x and u must have the same number of columns")
 
-        x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
-        u_max, u_min = np.max(u, axis=0), np.min(u, axis=0)
+        x_max, x_min = np.max(x, axis=1), np.min(x, axis=1)
+        u_max, u_min = np.max(u, axis=1), np.min(u, axis=1)
         self.Sx, self.iSx, self.sx, self.Su, self.iSu, self.su = self.compute_scaling(
             x_min, x_max, u_min, u_max
         )
@@ -62,44 +62,18 @@ class TrajectoryScaling:
         # 对状态量和控制量进行缩放
         scaled_x = self.iSx @ (x - self.sx)
         scaled_u = self.iSu @ (u - self.su)
-        scaled_tf = tf / self.S_sigma
+        scaled_tf = tf / self.S_tf
         return scaled_x, scaled_u, scaled_tf
 
     def unscale(self, scaled_x, scaled_u, scaled_tf):
         # 对缩放后的状态量和控制量进行还原
         x = self.Sx @ scaled_x + self.sx
         u = self.Su @ scaled_u + self.su
-        tf = scaled_tf * self.S_sigma
+        tf = scaled_tf * self.S_tf
         return x, u, tf
-
-
-# 测试用例
-def test_trajectory_scaling():
-    x_min, x_max = np.array([-1.0, -2.0]), np.array([1.0, 2.0])
-    u_min, u_max = np.array([-0.5, -1.0]), np.array([0.5, 1.0])
-
-    scaling = TrajectoryScaling(x_min, x_max, u_min, u_max)
-
-    # 测试缩放和逆缩放
-    x_test = np.array([[0.0, 1.0], [-1.0, 2.0]]).flatten()
-    u_test = np.array([[0.0, 0.5], [-0.5, 1.0]]).flatten()
-
-    scaled_x, scaled_u = scaling.scale(x_test, u_test, 2)
-    print("Scaled x:", scaled_x)
-    print("Scaled u:", scaled_u)
-
-    # 验证逆缩放
-    unscaled_x, unscaled_u = scaling.unscale(scaled_x, scaled_u, 2)
-    print("Unscaled x:", unscaled_x)
-    print("Unscaled u:", unscaled_u)
 
 
 if __name__ == "__main__":
     # 执行测试
 
-    a = np.random.randn(10, 5, 1)
-    b = np.random.randn(5, 5)
-    d = np.random.randn(5, 1)
-    c = b @ a + d
-    print(b @ a)
-    test_trajectory_scaling()
+    pass

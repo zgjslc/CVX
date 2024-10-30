@@ -15,7 +15,6 @@ class GuidanceOptimizer:
         self.N = 100
         self.iter_max = 6
         self.mode = "foh"
-        self.form_dynamic()
 
     def form_dynamic(self):
         """
@@ -49,7 +48,6 @@ class GuidanceOptimizer:
     def setParams(
         self,
         s=1,
-        m_dry=0,
         alpha_max=15 / 180 * pi,
         sigma_max=60 / 180 * pi,
         p_max=60000,
@@ -64,7 +62,6 @@ class GuidanceOptimizer:
         """
 
         self.s = s
-        self.m_dry = m_dry
         self.alpha_max = alpha_max
         self.sigma_max = sigma_max
         self.p_max = p_max
@@ -98,7 +95,7 @@ class GuidanceOptimizer:
         self.Vf = V
         self.thetaf = theta / 180 * pi
         self.psif = psi / 180 * pi
-        self.mf = m
+        self.m_dry = m
 
     def build_discrete_system(self, dt, tf, A, B, f):
         """

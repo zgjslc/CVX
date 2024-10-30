@@ -5,9 +5,9 @@ from ClimbModel import ClimbModel
 
 
 class Climb(ClimbModel):
-    def __init__(self, Cl, CD):
+    def __init__(self, CL, CD):
         super().__init__()
-        self.CL = Cl
+        self.CL = CL
         self.CD = CD
 
     # 构建特有约束与目标函数
@@ -25,19 +25,30 @@ class Climb(ClimbModel):
         problem = cp.Problem(obj, constraints)
         return problem, variables, params
 
-    def build_reference_trajectory(self):
-        P = (self.p_max + self.p_min) / 2
-        alpha = 5.0 / 180 * np.pi
-        state = np.array([self.y0, self.V0, self.theta0, self.m0])
-        dt = 0.1
-        x_ref, u_ref, tf_ref = [], [], 0
-        x_ref.append(state)
-        u_ref.append([P, alpha])
-        while state[-1] > self.mDry:
-            state = self.rungeKutta(state, P, alpha, dt)
+    def build_reference_trajectory(self, mode="linear"):
+        if mode == "linear":
+            y_ref = np.linspace(self.y0, self.yf, self.N).reshape(-1, 1)
+            v_ref = np.linspace(self.V0, self.Vf, self.N).reshape(-1, 1)
+            theta_ref = np.linspace(self.theta0, self.thetaf, self.N).reshape(-1, 1)
+            m_ref = np.linspace(self.m0, self.m_dry, self.N).reshape(-1, 1)
+            x_ref = np.vstack((y_ref, v_ref, theta_ref, m_ref))
+            P_ref = np.linspace(self.p_max, self.p_min, self.N).reshape(-1, 1)
+            alpha_ref = np.full_like(P_ref, 2 / 57.3)
+            u_ref = np.vstack((P_ref, alpha_ref))
+            tf_ref = (self.m0 - self.m_dry) / ((self.p_max + self.p_min) / 2 / self.Isp)
+        else:
+            P = (self.p_max + self.p_min) / 2
+            alpha = 2.0 / 180 * np.pi
+            state = np.array([self.y0, self.V0, self.theta0, self.m0])
+            dt = 0.1
+            x_ref, u_ref, tf_ref = [], [], 0
             x_ref.append(state)
             u_ref.append([P, alpha])
-            tf_ref += dt
+            while state[-1] > self.m_dry:
+                state = self.runge_kutta(state, P, alpha, dt)
+                x_ref.append(state)
+                u_ref.append([P, alpha])
+                tf_ref += dt
         return np.array(x_ref), np.array(u_ref), tf_ref
 
 
@@ -48,25 +59,24 @@ def main(
     heightf=40000,
     Vf=3000,
     s=1.0,
-    P=60000.0,
     Isp=4000.0,
-    Mdry=1400,
-    alphaMax=15 / 180 * np.pi,
+    m_dry=1400,
+    alpha_max=15 / 180 * np.pi,
 ):
     # print(X0, CL, CD, heightf, Vf, s, P, Isp, Mdry, alphaMax)
     X0 = [float("%.2f" % x) for x in X0]
-    Xf = [0, heightf, 0, Vf, 0 / 57.3, 90 / 180.0 * np.pi, Mdry]
+    Xf = [0, heightf, 0, Vf, 0 / 57.3, 90 / 180.0 * np.pi, m_dry]
 
     Mis = Climb(CL, CD)
     Mis.setParams(
-        alphaMax=alphaMax,
+        alpha_max=alpha_max,
         s=s,
-        P=P,
         Isp=Isp,
     )
-    Mis.setSimuParams(N=100, iterMax=10)
+    Mis.setSimuParams(N=100, iter_max=6)
     Mis.setIniState(*X0)
     Mis.setEndState(*Xf)
+    Mis.form_dynamic()
     result = Mis.solve()
     return np.array(result)
 
@@ -75,7 +85,7 @@ if __name__ == "__main__":
 
     from Climb import main
 
-    X0 = [0.0, 10000, 0.0, 600, -2.0 / 57.3, 0.0, 3000]
+    X0 = [10000, 0.0, 0.0, 600.0, 0 / 57.3, 0.0, 3000]
 
     CL = [
         1.00109221197850,

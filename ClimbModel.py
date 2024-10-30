@@ -2,7 +2,7 @@ import numpy as np
 from GuidanceOptimizer import GuidanceOptimizer
 import sympy as sy
 from sympy import cos, sin, exp
-from JacobianLinearizer import JacM
+from JacobianLinearizer import JacobianLinearizer
 import cvxpy as cp
 
 g0 = 9.81
@@ -23,7 +23,7 @@ class ClimbModel(GuidanceOptimizer):
 
     def dynamic(self, state, P, alpha):
         # 动力学计算
-        return self.Ja.GetF(*state, P, alpha)
+        return self.Ja.GetF(*state, P, alpha).flatten()
 
     def form_dynamic(self):
         # 定义动力学方程及雅可比矩阵
@@ -69,34 +69,34 @@ class ClimbModel(GuidanceOptimizer):
         all_vars = sy.Matrix([y, V, theta, m, P, alpha])
         self.state_dim = len(state_vars)
         self.control_dim = len(control_vars)
-        self.Ja = JacM(funcs, state_vars, control_vars, all_vars)
+        self.Ja = JacobianLinearizer(funcs, state_vars, control_vars, all_vars)
 
     def build_base_problem(self):
         # 构建基础优化模型
 
         # 定义轨迹缩放参数
         Sx, iSx, sx, Su, iSu, su = self.traj_scaling.get_scaling()
-        X = cp.Variable((self.N, self.stateDim, 1))
-        U = cp.Variable((self.N, self.controlDim, 1))
-        virtual_control = cp.Variable((self.N - 1, self.stateDim, 1))
+        X = cp.Variable((self.N, self.state_dim, 1))
+        U = cp.Variable((self.N, self.control_dim, 1))
+        virtual_control = cp.Variable((self.N - 1, self.state_dim, 1))
         tf = cp.Variable(nonneg=True)
 
         A, s, z = (
-            cp.Parameter((self.N - 1, self.stateDim, self.stateDim)),
-            cp.Parameter((self.N - 1, self.stateDim, 1)),
-            cp.Parameter((self.N - 1, self.stateDim, 1)),
+            cp.Parameter((self.N - 1, self.state_dim, self.state_dim)),
+            cp.Parameter((self.N - 1, self.state_dim, 1)),
+            cp.Parameter((self.N - 1, self.state_dim, 1)),
         )
 
         if self.mode == "zoh":
-            B = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
+            B = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
         elif self.mode == "foh":
-            Bm = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
-            Bp = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
+            Bm = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
+            Bp = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
         else:
             raise ValueError("type discretization should be zoh or foh")
 
-        x_ref = cp.Parameter((self.N, self.stateDim, 1))
-        u_ref = cp.Parameter((self.N, self.controlDim, 1))
+        x_ref = cp.Parameter((self.N, self.state_dim, 1))
+        u_ref = cp.Parameter((self.N, self.control_dim, 1))
         tf_ref = cp.Parameter(nonneg=True)
 
         x0 = np.array([self.y0, self.V0, self.theta0, self.m0]).reshape(-1, 1)
