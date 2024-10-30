@@ -8,7 +8,7 @@ class TrajectoryScaling:
     def __init__(self, x_min=None, x_max=None, u_min=None, u_max=None, tf=None):
         self.Sx, self.iSx, self.sx = None, None, None
         self.Su, self.iSu, self.su = None, None, None
-        self.S_sigma = tf
+        self.S_tf = tf
 
         if (
             x_min is not None

@@ -9,7 +9,7 @@ class JacobianLinearizer:
 
     def __init__(self, funcs, state_vars, control_vars, all_vars):
         """
-        初始化 JacM 类。
+        初始化 JacM 类
 
         参数:
         - funcs (sy.Matrix): 系统的符号函数（方程组矩阵）。

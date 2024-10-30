@@ -11,35 +11,34 @@ class Climb(ClimbModel):
         self.CD = CD
 
     # 构建特有约束与目标函数
-    def buildProblem(self):
-        F, X, cost, variables, params = self.buildBaseProblem()
-        F += [X[-1, 2, 0] <= 2.0 / 57.3]
-        F += [X[-1, 2, 0] >= -2.0 / 57.3]
+    def build_problem(self):
+        variables, params, constraints, cost = self.build_base_problem()
 
-        F += F + [X[-1, 3, 0] >= self.mf]
+        # 终点约束条件
+        X = variables["X"]
+        constraints += [X[-1, 0, 0] >= self.yf]
+        constraints += [X[-1, 1, 0] >= self.Vf]
+        constraints += [cp.abs(X[-1, 2, 0]) <= 2.0 / 180 * np.pi]
+        constraints += [X[-1, 3, 0] >= self.mf]
 
-        F += F + [X[-1, 0, 0] >= self.yf]
-        F += F + [X[-1, 1, 0] >= self.Vf]
         obj = cp.Minimize(cost)
-        problem = cp.Problem(obj, F)
+        problem = cp.Problem(obj, constraints)
         return problem, variables, params
 
-    def buildRefTrajectory(self):
-        P = (self.PMax + self.PMin) / 2
+    def build_reference_trajectory(self):
+        P = (self.p_max + self.p_min) / 2
         alpha = 5.0 / 180 * np.pi
         state = np.array([self.y0, self.V0, self.theta0, self.m0])
         dt = 0.1
-        XRef, URef, tfRef = [], [], 0
-        XRef.append(state)
-        URef.append([P, alpha])
-        while True:
+        x_ref, u_ref, tf_ref = [], [], 0
+        x_ref.append(state)
+        u_ref.append([P, alpha])
+        while state[-1] > self.mDry:
             state = self.rungeKutta(state, P, alpha, dt)
-            if state[-1] <= self.mDry:
-                break
-            XRef.append(state)
-            URef.append([P, alpha])
-            tfRef += dt
-        return np.array(XRef), np.array(URef), tfRef
+            x_ref.append(state)
+            u_ref.append([P, alpha])
+            tf_ref += dt
+        return np.array(x_ref), np.array(u_ref), tf_ref
 
 
 def main(
