@@ -1,13 +1,7 @@
-from scipy.interpolate import interp1d
 import numpy as np
 import cvxpy as cp
 import matplotlib.pyplot as plt
 from ClimbModel import ClimbModel
-
-R0 = 6371000
-g0 = 9.81
-hs, rho0 = 7110.0, 1.225
-KQ = 9.4369e-5
 
 
 class Climb(ClimbModel):
@@ -18,82 +12,34 @@ class Climb(ClimbModel):
 
     # 构建特有约束与目标函数
     def buildProblem(self):
-        ny, nV, ntheta, nm = (
-            np.arange(0, self.N * self.stateDim, 1).reshape(-1, self.stateDim).T
-        )
+        F, X, cost, variables, params = self.buildBaseProblem()
+        F += [X[-1, 2, 0] <= 2.0 / 57.3]
+        F += [X[-1, 2, 0] >= -2.0 / 57.3]
 
-        F, X, U, H, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf = self.buildBaseProblem()
-        F = F + [X[ntheta[-1]] <= 10.0 / 57.3]
-        F = F + [X[ntheta[-1]] >= -20.0 / 57.3]
+        F += F + [X[-1, 3, 0] >= self.mf]
 
-        F = F + [X[nm[-1]] >= self.mf]
-
-        F = F + [X[ny[-1]] >= self.yf]
-        obj = cp.Minimize(X[ny[-1]])
+        F += F + [X[-1, 0, 0] >= self.yf]
+        F += F + [X[-1, 1, 0] >= self.Vf]
+        obj = cp.Minimize(cost)
         problem = cp.Problem(obj, F)
-        return problem, X, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf
+        return problem, variables, params
 
-    def rungeKutta(self, state, alphaL=None, dt=0.1):
-
-        t = 0
-        result = []
-        while t < self.T:
-            alpha = alphaL(t)
-            K1 = self.dynamic(state, alpha)
-            K2 = self.dynamic(state + dt * K1 / 2, alpha)
-            K3 = self.dynamic(state + dt * K2 / 2, alpha)
-            K4 = self.dynamic(state + dt * K3, alpha)
-            state = state + dt * (K1 + 2 * K2 + 2 * K3 + K4) / 6
-            t += dt
-            result.append([t, *state, float(alpha), 0, self.P])
-        return result
-
-    def dynamic(self, state, alpha):
-        lon, y, lat, V, theta, psi, m = state
-        cl0, cl1, cl2, cl3, cl4, cl5, cl6, cl7, cl8, cl9 = self.CL
-        cd0, cd1, cd2, cd3, cd4, cd5, cd6, cd7, cd8, cd9 = self.CD
-
-        ma = V / 300
-
-        CD = (
-            cd0
-            + cd1 * ma
-            + cd4 * alpha
-            + cd5 * alpha**2
-            + cd6 * alpha**3
-            + cd7 * ma * alpha
-            + cd9 * ma * alpha**2
-        )  # 阻力系数
-
-        CL = (
-            cl0
-            + cl1 * ma
-            + cl4 * alpha
-            + cl5 * alpha**2
-            + cl6 * alpha**3
-            + cl7 * ma * alpha
-            + cl9 * ma * alpha**2
-        )  # 升力系数
-
-        rho = rho0 * np.exp(-1 / hs * y)
-        L = 0.5 * rho * V**2 * self.s * CL
-        D = 0.5 * rho * V**2 * self.s * CD
-        nx = (self.P * np.cos(alpha) - D) / m / g0
-        ny = (self.P * np.sin(alpha) + L) / m / g0
-        nz = 0
-        dstates = np.zeros(7)
-        dstates[0] = V * np.cos(theta) * np.sin(psi) / R0 / np.cos(lat)
-        dstates[1] = V * np.sin(theta)
-        dstates[2] = V * np.cos(theta) * np.cos(psi) / R0
-
-        dstates[3] = nx * g0 - g0 * np.sin(theta)
-        dstates[4] = ny * g0 / V - g0 * np.cos(theta) / V
-        dstates[5] = (
-            nz * g0 / V / np.cos(theta)
-            + V * np.tan(lat) * np.cos(theta) * np.sin(psi) / R0
-        )
-        dstates[6] = -self.P / self.Isp
-        return dstates
+    def buildRefTrajectory(self):
+        P = (self.PMax + self.PMin) / 2
+        alpha = 5.0 / 180 * np.pi
+        state = np.array([self.y0, self.V0, self.theta0, self.m0])
+        dt = 0.1
+        XRef, URef, tfRef = [], [], 0
+        XRef.append(state)
+        URef.append([P, alpha])
+        while True:
+            state = self.rungeKutta(state, P, alpha, dt)
+            if state[-1] <= self.mDry:
+                break
+            XRef.append(state)
+            URef.append([P, alpha])
+            tfRef += dt
+        return np.array(XRef), np.array(URef), tfRef
 
 
 def main(
@@ -123,10 +69,6 @@ def main(
     Mis.setIniState(*X0)
     Mis.setEndState(*Xf)
     result = Mis.solve()
-    # alpha = result[-1, :]
-    # tk = np.linspace(0, Mis.T, Mis.N)
-    # alphaL = interp1d(tk, alpha)
-    # # Traj = Mis.rungeKutta(X0, alphaL)
     return np.array(result)
 
 

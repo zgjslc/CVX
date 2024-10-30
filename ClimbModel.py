@@ -18,6 +18,19 @@ class ClimbModel(Core):
         self.alphaL = None
         self.sigmaL = None
 
+    def rungeKutta(self, state, P, alpha, dt):
+        # RK4积分
+        K1 = self.dynamic(state, P, alpha)
+        K2 = self.dynamic(state + dt * K1 / 2, P, alpha)
+        K3 = self.dynamic(state + dt * K2 / 2, P, alpha)
+        K4 = self.dynamic(state + dt * K3, P, alpha)
+        state = state + dt * (K1 + 2 * K2 + 2 * K3 + K4) / 6
+        return state
+
+    def dynamic(self, state, P, alpha):
+        # 动力学计算
+        return self.Ja.GetF(*state, P, alpha)
+
     def formDynamic(self):
         y, V, theta, m, P, alpha = sy.symbols("y, V, theta, m, P, alpha")
         cl0, cl1, cl2, cl3, cl4, cl5, cl6, cl7, cl8, cl9 = self.CL
@@ -60,67 +73,90 @@ class ClimbModel(Core):
         allVars = sy.Matrix([y, V, theta, m, P, alpha])
         self.stateDim = 4
         self.controlDim = 2
-        return JacM(funcs, args, sy.Matrix([P, alpha]), Func, allVars)
-
-    def buildRefTraj(self):
-        tK = linspace(0, 1, self.N)
-        yK = linspace(self.y0, self.yf, self.N)
-        VK = linspace(self.V0, self.Vf, self.N)
-        thetaK = linspace(self.theta0, 0 / 57.3, self.N)
-        mK = linspace(self.m0, self.mf, self.N)
-        alphaK = linspace(2 / 57.3, -2 / 57.3, self.N)
-        PK = linspace(self.PMin, self.PMax, self.N)
-        refTraj = np.concatenate(
-            (
-                yK.reshape(1, -1),
-                VK.reshape(1, -1),
-                thetaK.reshape(1, -1),
-                mK.reshape(1, -1),
-            ),
-            axis=0,
-        )
-        addParams = np.concatenate((PK.reshape(1, -1), alphaK.reshape(1, -1)))
-        return tK, refTraj, addParams
+        self.Ja = JacM(funcs, args, sy.Matrix([P, alpha]), Func, allVars)
 
     def buildBaseProblem(self):
-        nP, nalpha = (
-            np.arange(0, (self.N - 1) * self.controlDim, 1)
-            .reshape(-1, self.controlDim)
-            .T
+        Sx, iSx, sx, Su, iSu, su = self.traj_scaling.get_scaling()
+        X = cp.Variable((self.N, self.stateDim, 1))
+        U = cp.Variable((self.N, self.controlDim, 1))
+        H = cp.Variable((self.N - 1, self.stateDim, 1))
+        tf = cp.Variable(nonneg=True)
+        A, s, z = (
+            cp.Parameter((self.N - 1, self.stateDim, self.stateDim)),
+            cp.Parameter((self.N - 1, self.stateDim)),
+            cp.Parameter((self.N - 1, self.stateDim)),
         )
-        X = cp.Variable(self.stateDim * self.N)
-        U = cp.Variable(self.controlDim * (self.N - 1))
-        H = cp.Variable(self.stateDim * (self.N - 1))
-        tf = cp.Variable()
-        AKk, BKk, FKk, CKk = (
-            cp.Parameter(((self.N - 1) * self.stateDim, self.N * self.stateDim)),
-            cp.Parameter(
-                ((self.N - 1) * self.stateDim, (self.N - 1) * self.controlDim)
-            ),
-            cp.Parameter(((self.N - 1) * self.stateDim,)),
-            cp.Parameter(((self.N - 1) * self.stateDim,)),
-        )
-        XRefP = cp.Parameter(self.N * self.stateDim)
-        DeltaP = cp.Parameter(self.N * self.stateDim)
+        if self.mode == "zoh":
+            B = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
+        elif self.mode == "foh":
+            Bm = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
+            Bp = cp.Parameter((self.N - 1, self.stateDim, self.controlDim))
+        else:
+            raise ValueError("type discretization should be zoh or foh")
 
-        x0 = np.array([self.y0, self.V0, self.theta0, self.m0])
-        alpha = X[nalpha]
-        P = X[nP]
+        XRef = cp.Parameter((self.N, self.stateDim, 1))
+        URef = cp.Parameter((self.N, self.controlDim, 1))
+        tfRef = cp.Parameter(nonneg=True)
+
+        x0 = np.array([self.y0, self.V0, self.theta0, self.m0]).reshape(-1, 1)
+
+        X_unscaled = Sx @ X + sx
+        U_unscaled = Su @ U + su
+
+        alpha = U_unscaled[:, 0]
+        P = U_unscaled[:, 1]
+
         # 初值约束
-        F = [X[: self.stateDim] == x0[: self.stateDim]]
-
-        # 动力学方程约束
-        F += [AKk @ X + BKk @ U + FKk * tf + CKk == 0]
+        F = [X_unscaled[0] == x0]
 
         # 控制变量幅值约束
         F += [cp.abs(alpha) <= self.alphaMax]
-        F += [P <= self.PMax]
-        F += [P >= self.PMin]
+        F += [P <= self.PMax, P >= self.PMin]
 
-        # 信赖域约束
-        F += [cp.abs(X - XRefP) <= DeltaP]
+        # 动力学方程约束
+        if self.mode == "zoh":
+            F += [
+                X[1:]
+                == A @ X[:-1] + B @ U[:-1] + s * tf * self.traj_scaling.S_sigma + z + H
+            ]
+        else:
+            F += [
+                X[1:]
+                == A @ X[:-1]
+                + Bm @ U[:-1]
+                + Bp @ U[1:]
+                + s * tf * self.traj_scaling.S_sigma
+                + z
+                + H
+            ]
 
-        return F, X, U, H, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf
+        # 时间尽可能短的目标函数
+        cost_tf = [tf * self.traj_scaling.S_sigma]
+
+        # 虚拟控制量尽可能稀疏
+        cost_vc = [cp.norm(vc, 1) for vc in H]
+
+        # 与参考轨迹尽可能接近
+        cost_tr = [
+            cp.quad_form((X[i] - XRef[i]), np.eye(self.stateDim)) for i in range(self.N)
+        ]
+        cost_tr.append(
+            [
+                cp.quad_form((U[i] - URef[i]), np.eye(self.stateDim))
+                for i in range(self.N)
+            ]
+        )
+        cost_tr.append(cp.quad_form(tf - tfRef, np.eye(1)))
+
+        cost = cp.sum(cost_tf) + cp.sum(cost_vc) + cp.sum(cost_tr)
+        params = {"A": A, "s": s, "z": z, "XRef": XRef, "URef": URef, "tfRef": tfRef}
+        if self.mode == "zoh":
+            params["B"] = B
+        else:
+            params["Bm"] = Bm
+            params["Bp"] = Bp
+        variables = {"X": X, "U": U, "tf": tf, "vc": H}
+        return (F, X, cost, variables, params)
 
 
 if __name__ == "__main__":

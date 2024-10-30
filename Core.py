@@ -1,6 +1,5 @@
 import numpy as np
 from numpy import sin, cos, exp, zeros, linspace, sqrt, pi
-from scipy.linalg import block_diag
 from Discrete import DiscreteSystem
 from Scaling import TrajectoryScaling
 
@@ -13,15 +12,9 @@ class Core:
     def __init__(self):
         pass
 
-    def setDelta(self, delta):
-        # 设置信赖域参数
-        self._delta = delta
-        self._delta = np.array(self._delta).reshape(-1, 1)
-
     def setEpsilon(self, epsilon):
         # 设置收敛判定参数
-        self._epsilon = epsilon
-        self._epsilon = np.array(self._epsilon).reshape(-1, 1)
+        self.epsilon = epsilon
 
     def setParams(
         self,
@@ -51,12 +44,15 @@ class Core:
 
         return True
 
-    def setSimuParams(self, N=100, iterMax=6, mode="foh"):
+    def setSimuParams(self, N=100, iterMax=6, mode="foh", wTf=1, wVc=1e4, wtr=1e-3):
         # 设置仿真基本参数 轨迹离散点数N 序列凸优化最大迭代次数iterMax
 
         self.N = N
         self.iterMax = iterMax
         self.mode = mode
+        self.wtf = wTf
+        self.wvc = wVc
+        self.wtr = wtr
         return True
 
     def setIniState(self, y, lon, lat, V, theta, psi, m):
@@ -91,108 +87,66 @@ class Core:
             f,
         )
 
-    def formABCK(self, Ja, refTraj, dt, tf):
+    def formABCK(self, Ja, XRef, URef, tfRef):
+        dt = tfRef / self.N
         self.stateDim = Ja.stateDim
         self.controlDim = Ja.controlDim
-        self.discreteSys = self.buildDiscrete(dt, tf, Ja.GetA, Ja.GetB, Ja.GetF)
-        return self.discreteSys.diff_discrete(
-            refTraj[:, : self.stateDim], refTraj[:, self.stateDim :], mode=self.mode
-        )
+        self.discreteSys = self.buildDiscrete(dt, tfRef, Ja.GetA, Ja.GetB, Ja.GetF)
+        return self.discreteSys.diff_discrete(XRef, URef, mode=self.mode)
+
+    def tarjectory_scaling(self, x_min, x_max, u_min, u_max, tf):
+        self.traj_scaling = TrajectoryScaling(x_min, x_max, u_min, u_max, tf)
+
+    def buildProblem(self):
+        # 构造最优化问题，父类基函数
+        pass
+
+    def buildRefTrajectory(self):
+        # 构造参考轨迹 父类基函数
+        pass
 
     def solve(self):
-        _delta = self._delta.copy()
-        Ja = self.formDynamic()
+        self.formDynamic()
         _epsilon = self._epsilon.copy()
         _epsilon = np.repeat(_epsilon, self.N, axis=1).flatten("F")
-        tK, XRefTraj, addParm = self.buildRefTraj()
-        dt = tK[1] - tK[0]
-        self.DQFlag = True
-        TF = 106.0
+        XRef, URef, tfRef = self.buildRefTraj()
+
+        XRef_scaled, URef_scaled, tfRef_scaled = self.traj_scaling.scale(
+            XRef, URef, tfRef
+        )
+        problem, variables, params = self.buildProblem()
         for _ in range(self.iterMax):
-            if self.DQFlag:
-                _delta *= 0.8
-            prob, X, AKk, BKk, FKk, CKk, XRefP, DeltaP, tf = self.buildProblem()
-            AK, BK, FK, CK = self.formABCK(Ja, XRefTraj, addParm)
-            AKk.value, BKk.value, FKk.value, CKk.value = self.formDynamicConstraints(
-                AK, BK, FK, CK, self.N, dt, TF
-            )
-            XRefP.value = np.array(XRefTraj).flatten("F")
-            DeltaP.value = np.repeat(_delta, self.N, axis=1).flatten("F")
-            prob.solve("MOSEK", verbose=True, ignore_dpp=True)
-            if prob.status != "optimal":
-                print(prob.status)
+
+            A, Bm, Bp, s, z, xProb = self.formABCK(self.Ja, XRef, URef, tfRef)
+
+            (
+                params["A"],
+                params["s"],
+                params["z"],
+                params["XRef"],
+                params["URef"],
+                params["tfRef"],
+            ) = (A, s, z, XRef_scaled, URef_scaled, tfRef_scaled)
+            if self.mode == "zoh":
+                params["B"] = Bm
+            else:
+                params["Bm"] = Bm
+                params["Bp"] = Bp
+            problem.solve("MOSEK", verbose=True, ignore_dpp=True)
+            if problem.status != "optimal":
+                print(problem.status)
                 return [], False
-            if X.value is None:
-                self.DQFlag = False
-                continue
-            XRefTraj = X.value.reshape(-1, self.stateDim).T
-            TF = tf.value
-            if np.all(np.abs(X.value - XRefP.value) <= _epsilon):
-                break
-        return XRefTraj
 
-    def diff_discrete_foh(self, x, u, delT, tf, A_func, B_func, f_func):
-        # 线性插值的矩阵离散化方法（FOH） 矢量化
-        ix, iu = self.ix, self.iu
-
-        if x.ndim == 1:  # 单步状态和输入
-            N = 1
-            x, u = x[np.newaxis, :], u[np.newaxis, :]
-        else:
-            N = x.shape[0]
-
-        def dvdt(t, V, u_m, u_p, N):
-            alpha, beta = (delT - t) / delT, t / delT
-            u_interp = alpha * u_m + beta * u_p
-
-            V = V.reshape(N, ix + ix**2 + 2 * ix * iu + 2 * ix)
-            x, Phi_flat = V[:, :ix], V[:, ix : ix + ix**2]
-            Phi = Phi_flat.reshape(N, ix, ix)
-            Phi_inv = np.linalg.inv(Phi)
-
-            f = f_func(x, u_interp)
-            A, B = A_func(x, u_interp), B_func(x, u_interp)
-
-            dpdt = (A @ Phi).reshape(N, -1).T
-            dbmdt = (Phi_inv @ B).reshape(N, ix * iu).T * alpha
-            dbpdt = (Phi_inv @ B).reshape(N, ix * iu).T * beta
-            dsdt = (Phi_inv @ f[:, :, np.newaxis]).squeeze().T / tf
-            dzdt = (
-                (Phi_inv @ (-A @ x[:, :, np.newaxis] - B @ u_interp[:, :, np.newaxis]))
-                .squeeze()
-                .T
+            XRef_scaled, URef_scaled, tfRef_scaled = (
+                variables["X"].value,
+                variables["U"].value,
+                variables["tf"].value,
+            )
+            XRef, URef, tfRef = self.traj_scaling.unscale(
+                XRef_scaled, URef_scaled, tfRef_scaled
             )
 
-            dv = np.vstack((f.T, dpdt, dbmdt, dbpdt, dsdt, dzdt))
-            return dv.flatten(order="F")
-
-        # 初始条件设置
-        A0, B0 = np.eye(ix).flatten(), np.zeros(ix * iu)
-        V0 = np.hstack((x, A0, B0, B0, np.zeros(ix), np.zeros(ix))).T.flatten(order="F")
-
-        sol = solve_ivp(dvdt, (0, delT), V0, args=(u[:-1], u[1:], N))
-
-        # 提取各项结果
-        idx = {
-            "state": slice(0, ix),
-            "A": slice(ix, ix + ix**2),
-            "Bm": slice(ix + ix**2, ix + ix**2 + ix * iu),
-            "Bp": slice(ix + ix**2 + ix * iu, ix + ix**2 + 2 * ix * iu),
-            "s": slice(ix + ix**2 + 2 * ix * iu, ix + ix**2 + 2 * ix * iu + ix),
-            "z": slice(
-                ix + ix**2 + 2 * ix * iu + ix, ix + ix**2 + 2 * ix * iu + 2 * ix
-            ),
-        }
-
-        sol_final = sol.y[:, -1].reshape(N, -1)
-        x_prop = sol_final[:, idx["state"]].reshape(N, ix)
-        A = sol_final[:, idx["A"]].reshape(N, ix, ix)
-        Bm = A @ sol_final[:, idx["Bm"]].reshape(N, ix, iu)
-        Bp = A @ sol_final[:, idx["Bp"]].reshape(N, ix, iu)
-        s = A @ sol_final[:, idx["s"]].reshape(N, ix, 1).squeeze()
-        z = A @ sol_final[:, idx["z"]].reshape(N, ix, 1).squeeze()
-
-        return A, Bm, Bp, s, z, x_prop
+        return XRef, URef, tfRef
 
 
 if __name__ == "__main__":
