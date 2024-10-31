@@ -76,92 +76,110 @@ class ClimbModel(GuidanceOptimizer):
 
         # 定义轨迹缩放参数
         Sx, iSx, sx, Su, iSu, su = self.traj_scaling.get_scaling()
-        X = cp.Variable((self.N, self.state_dim, 1))
-        U = cp.Variable((self.N, self.control_dim, 1))
-        virtual_control = cp.Variable((self.N - 1, self.state_dim, 1))
+        X = cp.Variable((self.N, self.state_dim))
+        U = cp.Variable((self.N, self.control_dim))
+        virtual_control = cp.Variable((self.N - 1, self.state_dim))
         tf = cp.Variable(nonneg=True)
-
-        A, s, z = (
-            cp.Parameter((self.N - 1, self.state_dim, self.state_dim)),
-            cp.Parameter((self.N - 1, self.state_dim, 1)),
-            cp.Parameter((self.N - 1, self.state_dim, 1)),
-        )
-
+        A = [cp.Parameter((self.state_dim, self.state_dim)) for _ in range(self.N - 1)]
+        s = [cp.Parameter(self.state_dim) for _ in range(self.N - 1)]
+        z = [cp.Parameter(self.state_dim) for _ in range(self.N - 1)]
         if self.mode == "zoh":
-            B = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
+            B = [
+                cp.Parameter((self.state_dim, self.control_dim))
+                for _ in range(self.N - 1)
+            ]
+            Bm, Bp = None, None
         elif self.mode == "foh":
-            Bm = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
-            Bp = cp.Parameter((self.N - 1, self.state_dim, self.control_dim))
+            Bm = [
+                cp.Parameter((self.state_dim, self.control_dim))
+                for _ in range(self.N - 1)
+            ]
+            Bp = [
+                cp.Parameter((self.state_dim, self.control_dim))
+                for _ in range(self.N - 1)
+            ]
+            B = None
         else:
             raise ValueError("type discretization should be zoh or foh")
 
-        x_ref = cp.Parameter((self.N, self.state_dim, 1))
-        u_ref = cp.Parameter((self.N, self.control_dim, 1))
+        x_ref = cp.Parameter((self.N, self.state_dim))
+        u_ref = cp.Parameter((self.N, self.control_dim))
         tf_ref = cp.Parameter(nonneg=True)
 
-        x0 = np.array([self.y0, self.V0, self.theta0, self.m0]).reshape(-1, 1)
+        x0 = np.array([self.y0, self.V0, self.theta0, self.m0])
 
-        X_unscaled = Sx @ X + sx
-        U_unscaled = Su @ U + su
+        X_unscaled = (Sx @ X.T + sx).T
+        U_unscaled = (Su @ U.T + su).T
         tf_unscaled = tf * self.traj_scaling.S_tf
-        virtual_control_unscaled = Sx @ virtual_control + sx
+        virtual_control_unscaled = virtual_control
         P_unscaled = U_unscaled[:, 0]
         alpha_unscaled = U_unscaled[:, 1]
 
         # 初值约束
         constraints = [X_unscaled[0] == x0]
+        # 状态量过程约束
+        constraints += [X_unscaled[:, 0] <= 50000]
 
         # 控制变量幅值约束
-        constraints += [cp.abs(alpha_unscaled) <= self.alphaMax]
-        constraints += [P_unscaled <= self.PMax, P_unscaled >= self.PMin]
+        constraints += [cp.abs(alpha_unscaled) <= self.alpha_max]
+        constraints += [P_unscaled <= self.p_max, P_unscaled >= self.p_min]
 
         # 动力学方程约束
-        if self.mode == "zoh":
-            constraints += [
-                X[1:]
-                == A @ X_unscaled[:-1]
-                + B @ U_unscaled[:-1]
-                + s * tf_unscaled
-                + z
-                + virtual_control_unscaled
-            ]
-        else:
-            constraints += [
-                X[1:]
-                == A @ X_unscaled[:-1]
-                + Bm @ U_unscaled[:-1]
-                + Bp @ U_unscaled[1:]
-                + s * tf_unscaled
-                + z
-                + virtual_control_unscaled
-            ]
+        for i in range(self.N - 1):
+            if self.mode == "zoh":
+                constraints += [
+                    X_unscaled[i + 1]
+                    == A[i] @ X_unscaled[i]
+                    + B[i] @ U_unscaled[i]
+                    + s[i] * tf_unscaled
+                    + z[i]
+                    + virtual_control_unscaled[i]
+                ]
+            else:
+                constraints += [
+                    X_unscaled[i + 1]
+                    == A[i] @ X_unscaled[i]
+                    + Bm[i] @ U_unscaled[i]
+                    + Bp[i] @ U_unscaled[i + 1]
+                    + s[i] * tf_unscaled
+                    + z[i]
+                    + virtual_control_unscaled[i]
+                ]
 
         # 时间尽可能短的目标函数
         cost_tf = tf_unscaled
 
         # 虚拟控制量尽可能稀疏
-        cost_vc = cp.sum([cp.norm(vc, 1) for vc in virtual_control])
+        cost_vc = cp.sum([cp.norm(virtual_control[i], 1) for i in range(self.N - 1)])
 
         # 与参考轨迹尽可能接近
-        cost_tr = cp.sum(
-            [
-                cp.quad_form((X[i] - x_ref[i]), np.eye(self.state_dim))
-                + cp.quad_form((U[i] - u_ref[i]), np.eye(self.control_dim))
-                for i in range(self.N)
-            ]
-        ) + cp.quad_form(tf - tf_ref, np.eye(1))
+        cost_tr = (
+            cp.sum(
+                [
+                    cp.quad_form((X[i] - x_ref[i]), np.eye(self.state_dim))
+                    + cp.quad_form((U[i] - u_ref[i]), np.eye(self.control_dim))
+                    for i in range(self.N)
+                ]
+            )
+            + (tf - tf_ref) ** 2
+        )
 
         cost = self.w_tf * cost_tf + self.w_vc * cost_vc + self.w_tr * cost_tr
 
         # 构建返回的变量和参数
-        params = {"A": A, "s": s, "z": z, "XRef": x_ref, "URef": u_ref, "tfRef": tf_ref}
-        if self.mode == "zoh":
-            params["B"] = B
-        else:
-            params["Bm"] = Bm
-            params["Bp"] = Bp
+        params = {
+            "A": A,
+            "B": B,
+            "Bm": Bm,
+            "Bp": Bp,
+            "s": s,
+            "z": z,
+            "XRef": x_ref,
+            "URef": u_ref,
+            "tfRef": tf_ref,
+        }
         variables = {"X": X, "U": U, "tf": tf, "vc": virtual_control}
-        return (variables, params, constraints, cost)
+        return (X_unscaled, variables, params, constraints, cost)
 
 
 if __name__ == "__main__":

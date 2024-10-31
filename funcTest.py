@@ -1,4 +1,9 @@
 import numpy as np
 
-a = np.random.rand(5, 3, 2)
-print(a[0, 0])
+a = np.random.rand(2, 2)
+aa = np.linalg.norm(a[0], 1)
+
+bbb = np.linalg.norm(a, 1)
+c = np.sum(a)
+
+aaa = 4

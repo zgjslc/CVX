@@ -1,15 +1,19 @@
 from numpy import pi
+import numpy as np
 from Discrete import DiscreteSystem
 from Scaling import TrajectoryScaling
+import matplotlib.pyplot as plt
+import time
 
 
 # 针对时间自由的问题
 class GuidanceOptimizer:
-    def __init__(self, epsilon=1e-6):
+    def __init__(self, epsilon=1e-2, vctrol=1e-2):
         """
         初始化Core类
         """
         self.epsilon = epsilon
+        self.vctrol = vctrol
         self.state_dim = None
         self.control_dim = None
         self.N = 100
@@ -50,8 +54,8 @@ class GuidanceOptimizer:
         s=1,
         alpha_max=15 / 180 * pi,
         sigma_max=60 / 180 * pi,
+        p_min=40000,
         p_max=60000,
-        p_min=60000,
         Qs_max=1e6,
         q_ax=9e5,
         n_max=50,
@@ -120,8 +124,11 @@ class GuidanceOptimizer:
         初始化轨迹缩放器
         """
         x_ref, u_ref, tf_ref = self.build_reference_trajectory()
-        self.traj_scaling = TrajectoryScaling(tf=tf_ref)
-        self.traj_scaling.update_scaling_from_traj(x_ref, u_ref)
+        x_min = np.array([10000.0, 600.0, -2 / 180.0 * pi, 1400.0])
+        x_max = np.array([40000.0, 3000.0, 10 / 180.0 * pi, 3000.0])
+        u_min = np.array([self.p_min, -self.alpha_max])
+        u_max = np.array([self.p_max, self.alpha_max])
+        self.traj_scaling = TrajectoryScaling(x_min, x_max, u_min, u_max, tf=tf_ref)
         return x_ref, u_ref, tf_ref
 
     def solve(self):
@@ -133,33 +140,43 @@ class GuidanceOptimizer:
             x_ref, u_ref, tf_ref
         )
         problem, variables, params = self.build_problem()
-        for _ in range(self.iter_max):
+        flag = True
+        iterNum = 0
+        while flag:
+
             A, Bm, Bp, s, z, xProb = self.form_abc(self.Ja, x_ref, u_ref, tf_ref)
-
-            # 更新CVXPY参数
-            (
-                params["A"].value,
-                params["s"].value,
-                params["z"].value,
-                params["XRef"].value,
-                params["URef"].value,
-                params["tfRef"].value,
-            ) = (A, s, z, x_ref_scaled, u_ref_scaled, tf_ref_scaled)
-
-            # 根据模式设置B矩阵
-            if self.mode == "zoh":
-                params["B"].value = Bm
-            else:
-                params["Bm"].value = Bm
-                params["Bp"].value = Bp
-
+            params["XRef"].value,
+            params["URef"].value,
+            params["tfRef"].value,
+            for i in range(self.N - 1):
+                params["A"][i].value = A[i]
+                params["s"][i].value = s[i]
+                params["z"][i].value = z[i]
+                # 根据模式设置B矩阵
+                if self.mode == "zoh":
+                    params["B"][i].value = Bm[i]
+                else:
+                    params["Bm"][i].value = Bm[i]
+                    params["Bp"][i].value = Bp[i]
+            params["XRef"].value = x_ref
+            params["URef"].value = u_ref
+            params["tfRef"].value = tf_ref
+            tic = time.time()
             # 求解优化问题
-            problem.solve("MOSEK", verbose=True, ignore_dpp=True)
-
+            problem.solve("MOSEK", verbose=False)
+            print(
+                f"第{iterNum+1}次求解，迭代时间: {time.time()-tic}，状态: {problem.status}"
+            )
             if problem.status != "optimal":
                 print(f"求解状态: {problem.status}")
                 return [], [], []
-
+            if np.max(variables["vc"].value) < self.vctrol:
+                print(np.max(variables["X"].value[:, 0] - x_ref_scaled[:, 0]))
+                if (
+                    np.max(variables["X"].value - x_ref_scaled) < self.epsilon
+                    or iterNum >= self.iter_max
+                ):
+                    flag = False
             # 更新参考轨迹
             x_ref_scaled, u_ref_scaled, tf_ref_scaled = (
                 variables["X"].value,
@@ -169,7 +186,17 @@ class GuidanceOptimizer:
             x_ref, u_ref, tf_ref = self.traj_scaling.unscale(
                 x_ref_scaled, u_ref_scaled, tf_ref_scaled
             )
-
+            iterNum += 1
+            t = np.linspace(0, tf_ref, self.N)
+        plt.figure(1)
+        plt.plot(t, x_ref[:, 0])
+        plt.figure(2)
+        plt.plot(t, x_ref[:, 1])
+        plt.figure(3)
+        plt.plot(t, u_ref[:, 0])
+        plt.figure(4)
+        plt.plot(t, u_ref[:, 1])
+        plt.show()
         return x_ref, u_ref, tf_ref
 
 

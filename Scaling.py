@@ -49,28 +49,28 @@ class TrajectoryScaling:
         # 从提供的状态和控制量轨迹中更新缩放范围
         if not (isinstance(x, np.ndarray) and isinstance(u, np.ndarray)):
             raise ValueError("x and u must be numpy arrays")
-        if x.shape[1] != u.shape[1]:
+        if x.shape[0] != u.shape[0]:
             raise ValueError("x and u must have the same number of columns")
 
-        x_max, x_min = np.max(x, axis=1), np.min(x, axis=1)
-        u_max, u_min = np.max(u, axis=1), np.min(u, axis=1)
+        x_max, x_min = np.max(x, axis=0), np.min(x, axis=0)
+        u_max, u_min = np.max(u, axis=0), np.min(u, axis=0)
         self.Sx, self.iSx, self.sx, self.Su, self.iSu, self.su = self.compute_scaling(
             x_min, x_max, u_min, u_max
         )
 
     def scale(self, x, u, tf):
         # 对状态量和控制量进行缩放
-        scaled_x = self.iSx @ (x - self.sx)
-        scaled_u = self.iSu @ (u - self.su)
+        scaled_x = self.iSx @ (x.T - self.sx)
+        scaled_u = self.iSu @ (u.T - self.su)
         scaled_tf = tf / self.S_tf
-        return scaled_x, scaled_u, scaled_tf
+        return scaled_x.T, scaled_u.T, scaled_tf
 
     def unscale(self, scaled_x, scaled_u, scaled_tf):
         # 对缩放后的状态量和控制量进行还原
-        x = self.Sx @ scaled_x + self.sx
-        u = self.Su @ scaled_u + self.su
+        x = self.Sx @ scaled_x.T + self.sx
+        u = self.Su @ scaled_u.T + self.su
         tf = scaled_tf * self.S_tf
-        return x, u, tf
+        return x.T, u.T, tf
 
 
 if __name__ == "__main__":

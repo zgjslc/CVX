@@ -12,14 +12,13 @@ class Climb(ClimbModel):
 
     # 构建特有约束与目标函数
     def build_problem(self):
-        variables, params, constraints, cost = self.build_base_problem()
+        X, variables, params, constraints, cost = self.build_base_problem()
 
         # 终点约束条件
-        X = variables["X"]
-        constraints += [X[-1, 0, 0] >= self.yf]
-        constraints += [X[-1, 1, 0] >= self.Vf]
-        constraints += [cp.abs(X[-1, 2, 0]) <= 2.0 / 180 * np.pi]
-        constraints += [X[-1, 3, 0] >= self.mf]
+        constraints += [X[-1, 0] == self.yf]
+        constraints += [X[-1, 1] >= self.Vf]
+        constraints += [cp.abs(X[-1, 2]) <= 2.0 / 180 * np.pi]
+        constraints += [X[-1, 3] >= self.m_dry]
 
         obj = cp.Minimize(cost)
         problem = cp.Problem(obj, constraints)
@@ -29,12 +28,12 @@ class Climb(ClimbModel):
         if mode == "linear":
             y_ref = np.linspace(self.y0, self.yf, self.N).reshape(-1, 1)
             v_ref = np.linspace(self.V0, self.Vf, self.N).reshape(-1, 1)
-            theta_ref = np.linspace(self.theta0, self.thetaf, self.N).reshape(-1, 1)
+            theta_ref = np.linspace(-2 / 57.3, 2 / 57.3, self.N).reshape(-1, 1)
             m_ref = np.linspace(self.m0, self.m_dry, self.N).reshape(-1, 1)
-            x_ref = np.vstack((y_ref, v_ref, theta_ref, m_ref))
+            x_ref = np.hstack((y_ref, v_ref, theta_ref, m_ref))
             P_ref = np.linspace(self.p_max, self.p_min, self.N).reshape(-1, 1)
             alpha_ref = np.full_like(P_ref, 2 / 57.3)
-            u_ref = np.vstack((P_ref, alpha_ref))
+            u_ref = np.hstack((P_ref, alpha_ref))
             tf_ref = (self.m0 - self.m_dry) / ((self.p_max + self.p_min) / 2 / self.Isp)
         else:
             P = (self.p_max + self.p_min) / 2
@@ -49,6 +48,7 @@ class Climb(ClimbModel):
                 x_ref.append(state)
                 u_ref.append([P, alpha])
                 tf_ref += dt
+
         return np.array(x_ref), np.array(u_ref), tf_ref
 
 
@@ -65,7 +65,7 @@ def main(
 ):
     # print(X0, CL, CD, heightf, Vf, s, P, Isp, Mdry, alphaMax)
     X0 = [float("%.2f" % x) for x in X0]
-    Xf = [0, heightf, 0, Vf, 0 / 57.3, 90 / 180.0 * np.pi, m_dry]
+    Xf = [heightf, 2 / 57.3, 0, Vf, 0 / 57.3, 90 / 180.0 * np.pi, m_dry]
 
     Mis = Climb(CL, CD)
     Mis.setParams(
@@ -73,12 +73,11 @@ def main(
         s=s,
         Isp=Isp,
     )
-    Mis.setSimuParams(N=100, iter_max=6)
+    Mis.setSimuParams(N=200, iter_max=10)
     Mis.setIniState(*X0)
     Mis.setEndState(*Xf)
     Mis.form_dynamic()
-    result = Mis.solve()
-    return np.array(result)
+    X, U, tf = Mis.solve()
 
 
 if __name__ == "__main__":
@@ -112,12 +111,4 @@ if __name__ == "__main__":
         -3.04321936908916e-17,
         -0.222188925678902,
     ]
-    result = main(X0, CL, CD)
-    plt.figure(1)
-    plt.plot(result[:, 0], result[:, 2])
-
-    plt.figure(2)
-    plt.plot(result[:, 0], result[:, 4])
-    plt.grid()
-
-    plt.show()
+    main(X0, CL, CD)
