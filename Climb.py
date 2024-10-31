@@ -13,14 +13,16 @@ class Climb(ClimbModel):
     # 构建特有约束与目标函数
     def build_problem(self):
         X, variables, params, constraints, cost = self.build_base_problem()
-
+        U = variables["U"]
         # 终点约束条件
         constraints += [X[-1, 0] == self.yf]
         constraints += [X[-1, 1] >= self.Vf]
         constraints += [cp.abs(X[-1, 2]) <= 2.0 / 180 * np.pi]
         constraints += [X[-1, 3] >= self.m_dry]
 
-        obj = cp.Minimize(cost)
+        obj = cp.Minimize(
+            cost + 0.01 * cp.sum(U[:, 0] ** 2) + 0.001 * cp.sum(U[:, 1] ** 2)
+        )
         problem = cp.Problem(obj, constraints)
         return problem, variables, params
 
