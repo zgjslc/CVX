@@ -38,7 +38,7 @@ class GuidanceOptimizer:
         """
         raise NotImplementedError("请在子类中实现此方法")
 
-    def setSimuParams(self, N=100, iter_max=6, mode="foh", w_tf=1, w_vc=1e5, w_tr=1e-3):
+    def setSimuParams(self, N=100, iter_max=6, mode="foh", w_tf=1, w_vc=1e6, w_tr=1e-3):
         """
         设置仿真基本参数
         """
@@ -54,7 +54,7 @@ class GuidanceOptimizer:
         s=1,
         alpha_max=15 / 180 * pi,
         sigma_max=60 / 180 * pi,
-        p_min=40000,
+        p_min=60000,
         p_max=60000,
         Qs_max=1e6,
         q_ax=9e5,
@@ -132,6 +132,7 @@ class GuidanceOptimizer:
         return x_ref, u_ref, tf_ref
 
     def prePrcess(self):
+        # 构造最优化问题
         x_ref, u_ref, tf_ref = self.tarjectory_scaling()
         self.problem, self.variables, self.params = self.build_problem()
         return x_ref, u_ref, tf_ref
