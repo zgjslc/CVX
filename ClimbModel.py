@@ -105,8 +105,7 @@ class ClimbModel(GuidanceOptimizer):
         x_ref = cp.Parameter((self.N, self.state_dim))
         u_ref = cp.Parameter((self.N, self.control_dim))
         tf_ref = cp.Parameter(nonneg=True)
-
-        x0 = np.array([self.y0, self.V0, self.theta0, self.m0])
+        X0 = cp.Parameter(4)
 
         X_unscaled = (Sx @ X.T + sx).T
         U_unscaled = (Su @ U.T + su).T
@@ -116,7 +115,7 @@ class ClimbModel(GuidanceOptimizer):
         alpha_unscaled = U_unscaled[:, 1]
 
         # 初值约束
-        constraints = [X_unscaled[0] == x0]
+        constraints = [X_unscaled[0] == X0]
         # 状态量过程约束
         constraints += [X_unscaled[:, 0] <= 50000]
 
@@ -168,6 +167,7 @@ class ClimbModel(GuidanceOptimizer):
 
         # 构建返回的变量和参数
         params = {
+            "X0": X0,
             "A": A,
             "B": B,
             "Bm": Bm,

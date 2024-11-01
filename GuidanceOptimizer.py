@@ -38,7 +38,7 @@ class GuidanceOptimizer:
         """
         raise NotImplementedError("请在子类中实现此方法")
 
-    def setSimuParams(self, N=100, iter_max=6, mode="foh", w_tf=1, w_vc=1e4, w_tr=1e-3):
+    def setSimuParams(self, N=100, iter_max=6, mode="foh", w_tf=1, w_vc=1e5, w_tr=1e-3):
         """
         设置仿真基本参数
         """
@@ -77,7 +77,7 @@ class GuidanceOptimizer:
 
         return True
 
-    def setIniState(self, y, lon, lat, V, theta, psi, m):
+    def setIniState(self, y=0, lon=0, lat=0, V=0, theta=0, psi=0, m=0):
         """
         设置初始状态
         """
@@ -131,72 +131,68 @@ class GuidanceOptimizer:
         self.traj_scaling = TrajectoryScaling(x_min, x_max, u_min, u_max, tf=tf_ref)
         return x_ref, u_ref, tf_ref
 
-    def solve(self):
+    def prePrcess(self):
+        x_ref, u_ref, tf_ref = self.tarjectory_scaling()
+        self.problem, self.variables, self.params = self.build_problem()
+        return x_ref, u_ref, tf_ref
+
+    def solve(self, x_ref, u_ref, tf_ref):
         """
         主求解流程
         """
-        x_ref, u_ref, tf_ref = self.tarjectory_scaling()
+
         x_ref_scaled, u_ref_scaled, tf_ref_scaled = self.traj_scaling.scale(
             x_ref, u_ref, tf_ref
         )
-        problem, variables, params = self.build_problem()
+
         flag = True
         iterNum = 0
         while flag:
 
             A, Bm, Bp, s, z, xProb = self.form_abc(self.Ja, x_ref, u_ref, tf_ref)
-            params["XRef"].value,
-            params["URef"].value,
-            params["tfRef"].value,
+            self.params["XRef"].value,
+            self.params["URef"].value,
+            self.params["tfRef"].value,
+            self.params["X0"].value = np.array([self.y0, self.V0, self.theta0, self.m0])
             for i in range(self.N - 1):
-                params["A"][i].value = A[i]
-                params["s"][i].value = s[i]
-                params["z"][i].value = z[i]
+                self.params["A"][i].value = A[i]
+                self.params["s"][i].value = s[i]
+                self.params["z"][i].value = z[i]
                 # 根据模式设置B矩阵
                 if self.mode == "zoh":
-                    params["B"][i].value = Bm[i]
+                    self.params["B"][i].value = Bm[i]
                 else:
-                    params["Bm"][i].value = Bm[i]
-                    params["Bp"][i].value = Bp[i]
-            params["XRef"].value = x_ref
-            params["URef"].value = u_ref
-            params["tfRef"].value = tf_ref
+                    self.params["Bm"][i].value = Bm[i]
+                    self.params["Bp"][i].value = Bp[i]
+            self.params["XRef"].value = x_ref
+            self.params["URef"].value = u_ref
+            self.params["tfRef"].value = tf_ref
             tic = time.time()
             # 求解优化问题
-            problem.solve("MOSEK", verbose=False)
+            self.problem.solve("MOSEK", verbose=False, ignore_dpp=True)
             print(
-                f"第{iterNum+1}次求解，迭代时间: {time.time()-tic}，状态: {problem.status}"
+                f"第{iterNum+1}次求解，迭代时间: {time.time()-tic}，状态: {self.problem.status}"
             )
-            if problem.status != "optimal":
-                print(f"求解状态: {problem.status}")
+            if self.problem.status != "optimal":
+                print(f"求解状态: {self.problem.status}")
                 return [], [], []
-            if np.max(variables["vc"].value) < self.vctrol:
-                print(np.max(variables["X"].value[:, 0] - x_ref_scaled[:, 0]))
+            if np.max(self.variables["vc"].value) < self.vctrol:
+                print(np.max(self.variables["X"].value[:, 0] - x_ref_scaled[:, 0]))
                 if (
-                    np.max(variables["X"].value - x_ref_scaled) < self.epsilon
+                    np.max(self.variables["X"].value - x_ref_scaled) < self.epsilon
                     or iterNum >= self.iter_max
                 ):
                     flag = False
             # 更新参考轨迹
             x_ref_scaled, u_ref_scaled, tf_ref_scaled = (
-                variables["X"].value,
-                variables["U"].value,
-                variables["tf"].value,
+                self.variables["X"].value,
+                self.variables["U"].value,
+                self.variables["tf"].value,
             )
             x_ref, u_ref, tf_ref = self.traj_scaling.unscale(
                 x_ref_scaled, u_ref_scaled, tf_ref_scaled
             )
             iterNum += 1
-            t = np.linspace(0, tf_ref, self.N)
-        plt.figure(1)
-        plt.plot(t, x_ref[:, 0])
-        plt.figure(2)
-        plt.plot(t, x_ref[:, 1])
-        plt.figure(3)
-        plt.plot(t, u_ref[:, 0])
-        plt.figure(4)
-        plt.plot(t, u_ref[:, 1])
-        plt.show()
         return x_ref, u_ref, tf_ref
 
 
