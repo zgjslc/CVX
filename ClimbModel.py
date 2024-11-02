@@ -28,30 +28,15 @@ class ClimbModel(GuidanceOptimizer):
     def form_dynamic(self):
         # 定义动力学方程及雅可比矩阵
         y, V, theta, m, P, alpha = sy.symbols("y, V, theta, m, P, alpha")
-        cl0, cl1, cl2, cl3, cl4, cl5, cl6, cl7, cl8, cl9 = self.CL
-        cd0, cd1, cd2, cd3, cd4, cd5, cd6, cd7, cd8, cd9 = self.CD
+        aL, bL, cL = self.CL
+        aD, bD, cD = self.CD
 
         s = self.s
         ma = V / 300
-
-        CD = (
-            cd0
-            + cd1 * ma
-            + cd4 * alpha
-            + cd5 * alpha**2
-            + cd6 * alpha**3
-            + cd7 * ma * alpha
-            + cd9 * ma * alpha**2
-        )  # 阻力系数
-        CL = (
-            cl0
-            + cl1 * ma
-            + cl4 * alpha
-            + cl5 * alpha**2
-            + cl6 * alpha**3
-            + cl7 * ma * alpha
-            + cl9 * ma * alpha**2
-        )  # 升力系数
+        aL, bL, cL = self.CL
+        aD, bD, cD = self.CD
+        CL = aL + bL * alpha + cL * alpha**2
+        CD = aD + bD * alpha + cD * alpha**2
 
         rho = rho0 * exp(-y / hs)
         L = 0.5 * rho * V**2 * s * CL
